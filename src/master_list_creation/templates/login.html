@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Anime list control{% endblock %}
+{% block shell_class %}login-shell{% endblock %}
+{% block content %}
+  <section class="login-card" aria-labelledby="login-heading">
+    <div class="eyebrow">Restricted administration</div>
+    <h1 id="login-heading">Sign in to anime list control</h1>
+    <p>Manage list versions, inspect the catalog, and schedule upstream refreshes.</p>
+    {% if invalid %}<div class="alert alert-error" role="alert">The email or password is incorrect.</div>{% endif %}
+    {% if rate_limited %}<div class="alert alert-error" role="alert">Too many attempts. Try again in 15 minutes.</div>{% endif %}
+    <form class="form-stack" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field-group">
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+      </div>
+      <div class="field-group">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="button button-primary" type="submit">Sign in</button>
+    </form>
+  </section>
+{% endblock %}

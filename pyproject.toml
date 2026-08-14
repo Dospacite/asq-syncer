@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anime-song-quiz-master-list"
+version = "1.0.0"
+description = "Build the enriched Anime Song Quiz master list"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "Flask==3.1.2",
+    "gunicorn==23.0.0",
+]
+
+[project.scripts]
+anime-master-list = "master_list_creation.cli:main"
+anime-master-list-web = "master_list_creation.webapp:main"
+anime-master-list-worker = "master_list_creation.updater:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+master_list_creation = ["templates/*.html", "static/*.css"]

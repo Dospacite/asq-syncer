@@ -1,0 +1,68 @@
+name: anime-list-control
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data
+      SEED_LIST_PATH: /app/seed/libraryMasterList.json
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-ege@rousoftware.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      APP_TOKEN: ${APP_TOKEN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    expose:
+      - "8080"
+    volumes:
+      - anime-list-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["anime-master-list-worker"]
+    environment:
+      DATA_DIR: /data
+      SEED_LIST_PATH: /app/seed/libraryMasterList.json
+      WORKER_PORT: "8081"
+      UPDATE_INTERVAL_SECONDS: ${UPDATE_INTERVAL_SECONDS:-21600}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    expose:
+      - "8081"
+    volumes:
+      - anime-list-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  anime-list-data:
+
+x-asgard:
+  primary-service: web
+  services:
+    web:
+      role: web
+      public: true
+      port: 8080
+      health-path: /healthz
+    worker:
+      role: worker
+      public: false
+      port: 8081
+      health-path: /healthz

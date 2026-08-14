@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Browse anime · Anime list control{% endblock %}
+{% block content %}
+  <header class="page-heading compact-heading">
+    <div>
+      <div class="eyebrow">Version {{ latest.version }}</div>
+      <h1>Browse anime</h1>
+      <p>{{ "{:,}".format(total) }} matching records in the published list.</p>
+    </div>
+  </header>
+  <form class="search-form" method="get" role="search">
+    <div class="field-group"><label for="anime-search">Search by title or ANN ID</label><input id="anime-search" name="q" type="search" value="{{ query }}" placeholder="Try Steins;Gate"></div>
+    <button class="button button-primary" type="submit">Search</button>
+  </form>
+  {% if anime %}
+    <section class="anime-grid" aria-label="Anime results">
+      {% for item in anime %}
+        <article class="anime-card">
+          {% if item.image %}<img src="{{ item.image }}" alt="" loading="lazy" width="96" height="128">{% else %}<div class="image-fallback" aria-hidden="true">{{ item.title[:1] }}</div>{% endif %}
+          <div><h2>{{ item.title }}</h2><dl><div><dt>ANN ID</dt><dd>{{ item.id }}</dd></div><div><dt>Year</dt><dd>{{ item.year }}</dd></div><div><dt>Type</dt><dd>{{ item.category }}</dd></div><div><dt>Songs</dt><dd>{{ item.songs }}</dd></div></dl></div>
+        </article>
+      {% endfor %}
+    </section>
+    <nav class="pagination" aria-label="Results pages">
+      {% if page > 1 %}<a class="button button-secondary" href="{{ url_for('anime_browser', q=query, page=page-1) }}">Previous</a>{% endif %}
+      <span>Page {{ page }} of {{ pages }}</span>
+      {% if page < pages %}<a class="button button-secondary" href="{{ url_for('anime_browser', q=query, page=page+1) }}">Next</a>{% endif %}
+    </nav>
+  {% else %}
+    <section class="empty-state"><h2>No anime found</h2><p>Try a shorter title or a numeric ANN ID.</p></section>
+  {% endif %}
+{% endblock %}
