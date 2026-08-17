@@ -33,7 +33,7 @@ query ($ids: [Int]) {
       idMal
       genres
       tags { name rank isMediaSpoiler }
-      coverImage { large medium }
+      coverImage { extraLarge large medium }
     }
   }
 }

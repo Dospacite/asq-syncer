@@ -110,16 +110,27 @@ class BuilderTest(unittest.TestCase):
                 "coverImage": {
                     "medium": "https://example.com/fallback-small.jpg",
                     "large": "https://example.com/fallback.jpg",
+                    "extraLarge": "https://example.com/fallback-extra.jpg",
                 },
             },
         }
         self.images = {
             1: [
                 {
+                    "src": "https://example.com/ann-small.jpg",
+                    "width": 100,
+                    "height": 100,
+                },
+                {
                     "src": "https://example.com/ann.jpg",
                     "width": 200,
                     "height": 200,
-                }
+                },
+                {
+                    "src": "https://example.com/ann-unknown.jpg",
+                    "width": None,
+                    "height": None,
+                },
             ],
             2: [],
         }
@@ -139,6 +150,14 @@ class BuilderTest(unittest.TestCase):
         self.assertEqual(anime["animeExtendedInfo"]["genres"], ["Adventure", "Sci-Fi"])
         self.assertEqual(anime["animeExtendedInfo"]["tags"], ["Space"])
         self.assertEqual(anime["annImage"], "https://example.com/ann.jpg")
+        self.assertEqual(
+            [image["src"] for image in anime["annImages"]],
+            [
+                "https://example.com/ann.jpg",
+                "https://example.com/ann-small.jpg",
+                "https://example.com/ann-unknown.jpg",
+            ],
+        )
 
         song = anime["songLinks"]["OP"][0]
         self.assertEqual(song["songArtistName"], "NAW NAW")
@@ -152,7 +171,7 @@ class BuilderTest(unittest.TestCase):
 
         fallback = result["animeMap"]["2"]
         self.assertEqual(
-            fallback["annImage"], "https://example.com/fallback.jpg"
+            fallback["annImage"], "https://example.com/fallback-extra.jpg"
         )
         self.assertEqual(fallback["imageSource"], "anilist")
         self.assertEqual(stats.anime, 2)

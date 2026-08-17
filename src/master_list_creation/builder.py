@@ -173,16 +173,30 @@ def _tags(media: Mapping[str, Any], minimum_rank: int) -> list[str]:
     return result
 
 
+def _image_area(image: Mapping[str, Any]) -> int:
+    width = image.get("width")
+    height = image.get("height")
+    if isinstance(width, int) and isinstance(height, int):
+        return width * height
+    return -1
+
+
+def _largest_first(images: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Sorting is stable, so images without dimensions keep their source order
+    # behind every image we can measure.
+    return sorted(deepcopy(list(images)), key=_image_area, reverse=True)
+
+
 def _apply_images(
     anime: dict[str, Any],
     ann_id: int,
     ann_images: Mapping[int, Sequence[dict[str, Any]]],
     media: Mapping[str, Any],
 ) -> bool:
-    images = list(ann_images.get(ann_id, []))
+    images = _largest_first(ann_images.get(ann_id, []))
     if images:
         anime["annImage"] = images[0]["src"]
-        anime["annImages"] = deepcopy(images)
+        anime["annImages"] = images
         return True
 
     cover = media.get("coverImage")
@@ -190,7 +204,7 @@ def _apply_images(
         return False
     fallback_images: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for variant in ("medium", "large"):
+    for variant in ("extraLarge", "large", "medium"):
         src = cover.get(variant)
         if isinstance(src, str) and src and src not in seen:
             seen.add(src)
@@ -205,7 +219,7 @@ def _apply_images(
             )
     if not fallback_images:
         return False
-    anime["annImage"] = fallback_images[-1]["src"]
+    anime["annImage"] = fallback_images[0]["src"]
     anime["annImages"] = fallback_images
     anime["imageSource"] = "anilist"
     anime["aniListCoverImage"] = deepcopy(cover)
