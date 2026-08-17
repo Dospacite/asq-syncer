@@ -57,6 +57,25 @@ class WebAppTest(unittest.TestCase):
         store = self.app.extensions["version_store"]
         self.assertEqual(store.recent_jobs()[0]["status"], "pending")
 
+    def test_asset_refresh_button_queues_a_refresh_job(self) -> None:
+        self._login()
+        dashboard = self.client.get("/")
+        self.assertIn(b'action="/admin/asset-refresh"', dashboard.data)
+        self.assertIn(b"Refresh assets", dashboard.data)
+
+        with self.client.session_transaction() as browser_session:
+            csrf = browser_session["csrf_token"]
+        response = self.client.post("/admin/asset-refresh", data={"csrf_token": csrf})
+        self.assertEqual(response.status_code, 302)
+        store = self.app.extensions["version_store"]
+        job = store.recent_jobs()[0]
+        self.assertEqual(job["status"], "pending")
+        self.assertEqual(job["kind"], "asset_refresh")
+
+        self.assertEqual(
+            self.client.post("/admin/asset-refresh").status_code, 400
+        )
+
     def test_public_api_requires_token_and_serves_contract(self) -> None:
         self.assertEqual(self.client.get("/api/v1/anime-list/version").status_code, 401)
         headers = {"Authorization": "Bearer embedded-test-token"}

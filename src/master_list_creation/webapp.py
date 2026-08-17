@@ -171,8 +171,29 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
     @admin_required
     def request_update() -> Response:
         require_csrf()
-        job_id = store.enqueue_update(str(app.config["ADMIN_EMAIL"]))
-        flash(f"Update job #{job_id} is queued or already active.", "success")
+        job_id, created = store.enqueue_update(str(app.config["ADMIN_EMAIL"]))
+        if created:
+            flash(f"Update job #{job_id} is queued.", "success")
+        else:
+            flash(f"Job #{job_id} already covers this request.", "success")
+        return redirect(url_for("dashboard"))
+
+    @app.post("/admin/asset-refresh")
+    @admin_required
+    def request_asset_refresh() -> Response:
+        require_csrf()
+        job_id, created = store.enqueue_update(
+            str(app.config["ADMIN_EMAIL"]), kind="asset_refresh"
+        )
+        if created:
+            flash(
+                f"Asset refresh job #{job_id} is queued. Every upstream source is "
+                "re-downloaded and cover art is re-selected, which takes several "
+                "minutes; a new version is published only if records changed.",
+                "success",
+            )
+        else:
+            flash(f"Job #{job_id} already covers this asset refresh.", "success")
         return redirect(url_for("dashboard"))
 
     @app.get("/anime")

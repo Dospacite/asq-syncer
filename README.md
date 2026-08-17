@@ -108,6 +108,24 @@ through the existing enrichment/validation pipeline, atomically committed as
 the next integer application version, and diffed from its predecessor. The
 admin “Queue list update” button inserts a deduplicated job in the same queue.
 
+### Refreshing assets
+
+Cover art can improve without AMQ shipping a new master list, and cached
+upstream responses are only as good as the builder release that fetched them.
+The admin “Refresh assets” button queues an `asset_refresh` job, which:
+
+- re-downloads every AniSongDB, AniList, and ANN batch instead of reusing the
+  cache, so newly requested fields such as AniList `extraLarge` covers arrive;
+- rebuilds and re-selects the largest available image per anime;
+- publishes the result as the next application version even though the AMQ
+  source version is unchanged, but only if any record actually differs.
+
+The full run takes several minutes because of upstream rate limits. An asset
+refresh does everything a list update does, so queuing one supersedes a pending
+update; a pending refresh in turn satisfies any update requested behind it. The
+same work is available offline as `anime-master-list-worker --once
+--refresh-assets`.
+
 ### Deploying on Asgard
 
 Import the repository using `compose.yaml`. The Compose
@@ -135,8 +153,16 @@ material.
 | --- | --- |
 | [Anime Music Quiz master list](https://animemusicquiz.com/libraryMasterList) | Anime names, year/type, song links, core song/artist/group records, and `masterListId` |
 | [AniSongDB API](https://anisongdb.com/docs) | ANN-to-MAL/AniList/Kitsu links, song difficulty, duration, and audio/video file names |
-| [AniList GraphQL API](https://docs.anilist.co/guide/graphql/) | Genres, tags whose relevance rank meets `--min-tag-rank`, and fallback cover images |
+| [AniList GraphQL API](https://docs.anilist.co/guide/graphql/) | Genres, tags whose relevance rank meets `--min-tag-rank`, and cover images |
 | [Anime News Network Encyclopedia API](https://www.animenewsnetwork.com/encyclopedia/api.php) | Primary and alternate encyclopedia images with dimensions |
+
+Both image sources compete on measured size and the largest wins, because ANN
+publishes only a 200x200 thumbnail for most titles. AniList's GraphQL field
+names sit one step above the CDN path they resolve to — `extraLarge` is served
+from `/cover/large/` at 460px wide, `large` from `/cover/medium/` at 230px — so
+`extraLarge` is the widest cover the API offers. Heights vary per title and are
+not published, so `annImages` records the exact width and a null height for
+AniList entries, and the exact dimensions ANN reports for its own.
 
 The generated JSON contains the app-consumed `animeMap` and the source
 `masterListId` needed to reproduce it. The large AMQ `songMap`, `artistMap`, and

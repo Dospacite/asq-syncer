@@ -101,7 +101,11 @@ class BuilderTest(unittest.TestCase):
                     {"name": "Space", "rank": 80},
                     {"name": "Low relevance", "rank": 20},
                 ],
-                "coverImage": {"medium": "small.jpg", "large": "large.jpg"},
+                "coverImage": {
+                    "medium": "https://example.com/small.jpg",
+                    "large": "https://example.com/medium.jpg",
+                    "extraLarge": "https://example.com/large.jpg",
+                },
             },
             2: {
                 "id": 2,
@@ -149,12 +153,18 @@ class BuilderTest(unittest.TestCase):
         self.assertEqual(anime["animeExtendedInfo"]["malId"], 1226)
         self.assertEqual(anime["animeExtendedInfo"]["genres"], ["Adventure", "Sci-Fi"])
         self.assertEqual(anime["animeExtendedInfo"]["tags"], ["Space"])
-        self.assertEqual(anime["annImage"], "https://example.com/ann.jpg")
+        # ANN offers nothing above 200x200 here, so the 460px AniList cover wins,
+        # and both sources are ranked together in one largest-first list.
+        self.assertEqual(anime["annImage"], "https://example.com/large.jpg")
+        self.assertEqual(anime["imageSource"], "anilist")
         self.assertEqual(
             [image["src"] for image in anime["annImages"]],
             [
+                "https://example.com/large.jpg",
+                "https://example.com/medium.jpg",
                 "https://example.com/ann.jpg",
                 "https://example.com/ann-small.jpg",
+                "https://example.com/small.jpg",
                 "https://example.com/ann-unknown.jpg",
             ],
         )
@@ -182,6 +192,24 @@ class BuilderTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(validation_stats.songs_with_audio, 1)
         self.assertEqual(validation_stats.uploaded_songs_with_audio, 1)
+
+    def test_largest_ann_image_beats_the_anilist_cover(self) -> None:
+        self.images[1] = [
+            {"src": "https://example.com/ann-thumb.jpg", "width": 200, "height": 200},
+            {"src": "https://example.com/ann-full.jpg", "width": 900, "height": 1200},
+        ]
+        result, _ = build_master_list(
+            self.raw,
+            linked_entries=self.links,
+            anisongdb_songs=self.songs,
+            anilist_metadata=self.anilist,
+            ann_images=self.images,
+        )
+
+        anime = result["animeMap"]["1"]
+        self.assertEqual(anime["annImage"], "https://example.com/ann-full.jpg")
+        self.assertEqual(anime["annImages"][0]["source"], "ann")
+        self.assertNotIn("imageSource", anime)
 
     def test_missing_ids_use_negative_one(self) -> None:
         result, _ = build_master_list(

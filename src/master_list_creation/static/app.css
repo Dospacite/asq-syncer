@@ -55,6 +55,8 @@ input::placeholder { color: #606b80; opacity: 1; }
 .page-heading h1 { margin-block-end: 32px; }
 .page-heading p { margin-block-end: 0; }
 .compact-heading { margin-block-end: 32px; }
+.heading-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.hint { max-width: 78ch; margin-block: -32px 32px; color: var(--muted); font-size: .9375rem; }
 .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-block-end: 32px; }
 .metric-card { min-height: 128px; display: grid; align-content: center; gap: 8px; padding: 24px; background: var(--brand-dark); color: #fff; border-radius: var(--radius); box-shadow: var(--shadow); }
 .metric-card span { color: #ded6ff; font-size: .875rem; font-weight: 700; }

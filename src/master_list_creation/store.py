@@ -17,6 +17,9 @@ from .validation import validate_master_list
 
 
 SCHEMA_VERSION = 1
+# "update" republishes only when AMQ ships a new master list; "asset_refresh"
+# re-downloads every upstream source and republishes whenever the records change.
+JOB_KINDS = ("update", "asset_refresh")
 
 
 class VersionStore:
@@ -42,7 +45,7 @@ class VersionStore:
                 """
                 CREATE TABLE IF NOT EXISTS versions (
                     version INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_version TEXT NOT NULL UNIQUE,
+                    source_version TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     checksum TEXT NOT NULL,
                     anime_count INTEGER NOT NULL,
@@ -58,6 +61,7 @@ class VersionStore:
                 CREATE TABLE IF NOT EXISTS update_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     status TEXT NOT NULL DEFAULT 'pending',
+                    kind TEXT NOT NULL DEFAULT 'update',
                     requested_by TEXT NOT NULL,
                     requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     started_at TEXT,
@@ -69,11 +73,52 @@ class VersionStore:
                     ON update_jobs(status, id);
                 """
                 )
+                self._migrate(database)
                 count = database.execute("SELECT COUNT(*) FROM versions").fetchone()[0]
             if count == 0:
                 if seed_path is None or not seed_path.exists():
                     raise FileNotFoundError("no stored versions and seed master list is missing")
                 self.commit_snapshot(seed_path)
+
+    @staticmethod
+    def _migrate(database: sqlite3.Connection) -> None:
+        """Bring a database created by an earlier release up to date."""
+        columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(update_jobs)").fetchall()
+        }
+        if "kind" not in columns:
+            database.execute(
+                "ALTER TABLE update_jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'update'"
+            )
+
+        # Releases before asset refreshes existed allowed one version per AMQ
+        # source version. A refresh republishes the same source with better cover
+        # art, so that uniqueness constraint has to go; SQLite can only drop it by
+        # rebuilding the table.
+        definition = database.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'versions'"
+        ).fetchone()
+        if definition is None or "source_version TEXT NOT NULL UNIQUE" not in definition["sql"]:
+            return
+        database.executescript(
+            """
+            CREATE TABLE versions_migrated (
+                version INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_version TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                checksum TEXT NOT NULL,
+                anime_count INTEGER NOT NULL,
+                file_name TEXT NOT NULL UNIQUE
+            );
+            INSERT INTO versions_migrated
+                (version, source_version, created_at, checksum, anime_count, file_name)
+                SELECT version, source_version, created_at, checksum, anime_count, file_name
+                FROM versions;
+            DROP TABLE versions;
+            ALTER TABLE versions_migrated RENAME TO versions;
+            """
+        )
 
     def _connect(self) -> sqlite3.Connection:
         database = sqlite3.connect(self.db_path, timeout=30)
@@ -104,17 +149,27 @@ class VersionStore:
         ).hexdigest()
         return f"sha256:{digest}"
 
-    def commit_snapshot(self, source_path: Path) -> int:
+    def commit_snapshot(self, source_path: Path, *, allow_same_source: bool = False) -> int:
         value = read_json(source_path)
         errors, stats = validate_master_list(value)
         if errors:
             raise ValueError("invalid master list: " + "; ".join(errors[:5]))
         source_version = str(value["masterListId"])
+        checksum = self._anime_checksum(value)
         with self._database() as database:
-            existing = database.execute(
-                "SELECT version FROM versions WHERE source_version = ?",
-                (source_version,),
-            ).fetchone()
+            if allow_same_source:
+                # An asset refresh reuses the current source version, so identical
+                # records are the only thing that makes it a no-op.
+                existing = database.execute(
+                    "SELECT version FROM versions WHERE checksum = ? "
+                    "ORDER BY version DESC LIMIT 1",
+                    (checksum,),
+                ).fetchone()
+            else:
+                existing = database.execute(
+                    "SELECT version FROM versions WHERE source_version = ?",
+                    (source_version,),
+                ).fetchone()
             if existing:
                 return int(existing["version"])
             version = int(
@@ -129,7 +184,7 @@ class VersionStore:
                 """INSERT INTO versions
                    (version, source_version, checksum, anime_count, file_name)
                    VALUES (?, ?, ?, ?, ?)""",
-                (version, source_version, self._anime_checksum(value), stats.anime, file_name),
+                (version, source_version, checksum, stats.anime, file_name),
             )
         return version
 
@@ -270,17 +325,36 @@ class VersionStore:
                 )
             return path
 
-    def enqueue_update(self, requested_by: str) -> int:
+    def enqueue_update(
+        self, requested_by: str, kind: str = "update"
+    ) -> tuple[int, bool]:
+        """Queue a job of ``kind``, returning its id and whether it was created."""
+        if kind not in JOB_KINDS:
+            raise ValueError(f"unknown job kind: {kind}")
         with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
             active = database.execute(
-                "SELECT id FROM update_jobs WHERE status IN ('pending', 'running') ORDER BY id LIMIT 1"
-            ).fetchone()
-            if active:
-                return int(active["id"])
+                "SELECT id, status, kind FROM update_jobs "
+                "WHERE status IN ('pending', 'running') ORDER BY id"
+            ).fetchall()
+            # An asset refresh rebuilds everything a plain update would, so an
+            # active refresh satisfies both kinds while an active update only
+            # satisfies another update.
+            for job in active:
+                if kind == "update" or job["kind"] == "asset_refresh":
+                    return int(job["id"]), False
+            pending = next((job for job in active if job["status"] == "pending"), None)
+            if pending is not None:
+                database.execute(
+                    "UPDATE update_jobs SET kind = ?, requested_by = ? WHERE id = ?",
+                    (kind, requested_by, pending["id"]),
+                )
+                return int(pending["id"]), False
             cursor = database.execute(
-                "INSERT INTO update_jobs (requested_by) VALUES (?)", (requested_by,)
+                "INSERT INTO update_jobs (requested_by, kind) VALUES (?, ?)",
+                (requested_by, kind),
             )
-            return int(cursor.lastrowid)
+            return int(cursor.lastrowid), True
 
     def claim_job(self) -> dict[str, Any] | None:
         with self._database() as database:

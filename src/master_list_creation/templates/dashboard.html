@@ -7,11 +7,22 @@
       <h1>Anime list versions</h1>
       <p>Version {{ latest.version }} is live with {{ "{:,}".format(latest.anime_count) }} anime.</p>
     </div>
-    <form method="post" action="{{ url_for('request_update') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="button button-primary" type="submit">Queue list update</button>
-    </form>
+    <div class="heading-actions">
+      <form method="post" action="{{ url_for('request_asset_refresh') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="button button-secondary" type="submit">Refresh assets</button>
+      </form>
+      <form method="post" action="{{ url_for('request_update') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="button button-primary" type="submit">Queue list update</button>
+      </form>
+    </div>
   </header>
+  <p class="hint">
+    A list update publishes a new version only when AMQ ships a new master list.
+    Refreshing assets re-downloads every upstream source and re-selects the largest
+    available cover art, then republishes if any record changed.
+  </p>
   <section class="metric-grid" aria-label="Current version summary">
     <article class="metric-card"><span>Application version</span><strong>{{ latest.version }}</strong></article>
     <article class="metric-card"><span>Source version</span><strong class="metric-code">{{ latest.source_version }}</strong></article>
@@ -36,7 +47,7 @@
       {% if jobs %}
         <ol class="job-list">
           {% for job in jobs %}
-            <li><div><strong>Job #{{ job.id }}</strong><span>{{ job.requested_at }}</span></div><span class="status status-{{ job.status }}">{{ job.status }}</span>{% if job.message %}<p>{{ job.message }}</p>{% endif %}</li>
+            <li><div><strong>Job #{{ job.id }}</strong><span>{{ "Asset refresh" if job.kind == "asset_refresh" else "List update" }} · {{ job.requested_at }}</span></div><span class="status status-{{ job.status }}">{{ job.status }}</span>{% if job.message %}<p>{{ job.message }}</p>{% endif %}</li>
           {% endfor %}
         </ol>
       {% else %}

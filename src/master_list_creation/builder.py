@@ -7,6 +7,13 @@ from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Sequence
 
 
+# AniList serves every cover from a fixed-width box, and its GraphQL field names
+# sit one step above the CDN path they resolve to: extraLarge comes from
+# /cover/large/ at 460px, large from /cover/medium/ at 230px, medium from
+# /cover/small/ at 100px. Heights vary per title, so only widths are recorded.
+ANILIST_COVER_WIDTHS = {"extraLarge": 460, "large": 230, "medium": 100}
+
+
 @dataclass
 class BuildStats:
     anime: int = 0
@@ -173,18 +180,41 @@ def _tags(media: Mapping[str, Any], minimum_rank: int) -> list[str]:
     return result
 
 
-def _image_area(image: Mapping[str, Any]) -> int:
+def _image_pixels(image: Mapping[str, Any]) -> int:
     width = image.get("width")
     height = image.get("height")
-    if isinstance(width, int) and isinstance(height, int):
+    if not isinstance(width, int) or isinstance(width, bool):
+        return -1
+    if isinstance(height, int) and not isinstance(height, bool):
         return width * height
-    return -1
+    # Cover art is never wider than it is tall, so a square is a safe lower
+    # bound for an image whose height the upstream source does not publish.
+    return width * width
 
 
 def _largest_first(images: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    # Sorting is stable, so images without dimensions keep their source order
-    # behind every image we can measure.
-    return sorted(deepcopy(list(images)), key=_image_area, reverse=True)
+    # Sorting is stable, so images we cannot measure keep their source order
+    # behind every image we can.
+    return sorted(deepcopy(list(images)), key=_image_pixels, reverse=True)
+
+
+def _anilist_candidates(cover: Mapping[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for variant, width in ANILIST_COVER_WIDTHS.items():
+        src = cover.get(variant)
+        if isinstance(src, str) and src and src not in seen:
+            seen.add(src)
+            candidates.append(
+                {
+                    "src": src,
+                    "width": width,
+                    "height": None,
+                    "variant": variant,
+                    "source": "anilist",
+                }
+            )
+    return candidates
 
 
 def _apply_images(
@@ -193,36 +223,23 @@ def _apply_images(
     ann_images: Mapping[int, Sequence[dict[str, Any]]],
     media: Mapping[str, Any],
 ) -> bool:
-    images = _largest_first(ann_images.get(ann_id, []))
-    if images:
-        anime["annImage"] = images[0]["src"]
-        anime["annImages"] = images
-        return True
-
+    candidates = [
+        {**deepcopy(image), "source": "ann"} for image in ann_images.get(ann_id, [])
+    ]
     cover = media.get("coverImage")
-    if not isinstance(cover, dict):
+    if isinstance(cover, dict):
+        candidates.extend(_anilist_candidates(cover))
+    if not candidates:
         return False
-    fallback_images: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for variant in ("extraLarge", "large", "medium"):
-        src = cover.get(variant)
-        if isinstance(src, str) and src and src not in seen:
-            seen.add(src)
-            fallback_images.append(
-                {
-                    "src": src,
-                    "width": None,
-                    "height": None,
-                    "variant": variant,
-                    "source": "anilist",
-                }
-            )
-    if not fallback_images:
-        return False
-    anime["annImage"] = fallback_images[0]["src"]
-    anime["annImages"] = fallback_images
-    anime["imageSource"] = "anilist"
-    anime["aniListCoverImage"] = deepcopy(cover)
+
+    # ANN publishes only a 200x200 thumbnail for most titles, so the two sources
+    # compete on measured size rather than ANN winning whenever it has anything.
+    images = _largest_first(candidates)
+    anime["annImage"] = images[0]["src"]
+    anime["annImages"] = images
+    if images[0]["source"] == "anilist":
+        anime["imageSource"] = "anilist"
+        anime["aniListCoverImage"] = deepcopy(cover)
     return True
 
 

@@ -30,7 +30,7 @@ def _stop(_signum: int, _frame: object) -> None:
     STOP = True
 
 
-def run_update(store: VersionStore) -> tuple[int, str]:
+def run_update(store: VersionStore, *, refresh_assets: bool = False) -> tuple[int, str]:
     raw = HttpClient(timeout=90).get_json(AMQ_MASTER_LIST_URL)
     if not isinstance(raw, dict) or not isinstance(raw.get("animeMap"), dict):
         raise ValueError("AMQ response does not contain animeMap")
@@ -38,31 +38,35 @@ def run_update(store: VersionStore) -> tuple[int, str]:
     if not source_version:
         raise ValueError("AMQ response does not contain masterListId")
     current = store.latest()
-    if source_version == current["source_version"]:
+    if not refresh_assets and source_version == current["source_version"]:
         return int(current["version"]), "Already current; source version is unchanged."
 
     source_path = store.cache_dir / "raw" / f"{_safe_component(source_version)}.json"
     write_json(source_path, raw)
     with tempfile.TemporaryDirectory(dir=store.data_dir) as temporary_dir:
         output = Path(temporary_dir) / "libraryMasterList.json"
-        exit_code = builder_main(
-            [
-                "update",
-                "--source-file",
-                str(source_path),
-                "--output",
-                str(output),
-                "--cache-dir",
-                str(store.cache_dir),
-            ]
-        )
+        arguments = [
+            "update",
+            "--source-file",
+            str(source_path),
+            "--output",
+            str(output),
+            "--cache-dir",
+            str(store.cache_dir),
+        ]
+        if refresh_assets:
+            # Cover art already in the cache was fetched by whichever builder
+            # release wrote it, so an asset refresh has to ignore those batches.
+            arguments.append("--refresh")
+        exit_code = builder_main(arguments)
         if exit_code != 0:
             raise RuntimeError(f"master-list builder exited with status {exit_code}")
         previous_version = int(current["version"])
-        version = store.commit_snapshot(output)
+        version = store.commit_snapshot(output, allow_same_source=refresh_assets)
     if version != previous_version:
         store.get_or_create_diff(previous_version, version)
-    return version, f"Published source version {source_version} as version {version}."
+        return version, f"Published source version {source_version} as version {version}."
+    return version, f"The rebuild produced no changes; version {version} still stands."
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
@@ -81,22 +85,26 @@ class _HealthHandler(BaseHTTPRequestHandler):
         return
 
 
-def _update_child(data_dir: str, seed_path: str, results: multiprocessing.Queue) -> None:
+def _update_child(
+    data_dir: str, seed_path: str, refresh_assets: bool, results: multiprocessing.Queue
+) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     child_store = VersionStore(Path(data_dir))
     child_store.initialize(Path(seed_path))
     try:
-        version, message = run_update(child_store)
+        version, message = run_update(child_store, refresh_assets=refresh_assets)
         results.put((True, version, message))
     except Exception as error:
         results.put((False, None, str(error)))
 
 
-def _interruptible_update(store: VersionStore, seed_path: Path) -> tuple[int, str]:
+def _interruptible_update(
+    store: VersionStore, seed_path: Path, *, refresh_assets: bool = False
+) -> tuple[int, str]:
     results: multiprocessing.Queue = multiprocessing.Queue(maxsize=1)
     process = multiprocessing.Process(
         target=_update_child,
-        args=(str(store.data_dir), str(seed_path), results),
+        args=(str(store.data_dir), str(seed_path), refresh_assets, results),
         daemon=False,
     )
     process.start()
@@ -133,9 +141,21 @@ def run_worker(store: VersionStore, seed_path: Path, interval_seconds: int) -> N
             store.enqueue_update("scheduler")
             job = store.claim_job()
         job_id = int(job["id"]) if job else None
+        refresh_assets = bool(job) and job["kind"] == "asset_refresh"
         try:
-            version, message = _interruptible_update(store, seed_path)
-            LOGGER.info(json.dumps({"event": "update_complete", "version": version, "message": message}))
+            version, message = _interruptible_update(
+                store, seed_path, refresh_assets=refresh_assets
+            )
+            LOGGER.info(
+                json.dumps(
+                    {
+                        "event": "update_complete",
+                        "kind": job["kind"] if job else "update",
+                        "version": version,
+                        "message": message,
+                    }
+                )
+            )
             if job_id is not None:
                 store.finish_job(job_id, version=version, message=message)
         except InterruptedError as error:
@@ -152,6 +172,11 @@ def run_worker(store: VersionStore, seed_path: Path, interval_seconds: int) -> N
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the anime-list update worker")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--refresh-assets",
+        action="store_true",
+        help="with --once, re-download every upstream source instead of reusing caches",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(message)s")
     data_dir = Path(os.getenv("DATA_DIR", "/data"))
@@ -159,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     store = VersionStore(data_dir)
     store.initialize(seed)
     if args.once:
-        version, message = run_update(store)
+        version, message = run_update(store, refresh_assets=args.refresh_assets)
         print(json.dumps({"version": version, "message": message}))
         return 0
     health_server = ThreadingHTTPServer(
