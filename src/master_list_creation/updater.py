@@ -65,9 +65,17 @@ def run_update(store: VersionStore, *, refresh_assets: bool = False) -> tuple[in
     if not source_version:
         raise ValueError("AMQ response does not contain masterListId")
     current = store.latest()
-    if not refresh_assets and source_version == current["source_version"]:
+    published = None if refresh_assets else store.published_version(source_version)
+    if published is not None:
         _prune(store, source_version)
-        return int(current["version"]), "Already current; source version is unchanged."
+        if source_version == current["source_version"]:
+            return int(current["version"]), "Already current; source version is unchanged."
+        # AMQ occasionally serves a master list it has already moved past.
+        # Publishing it again would only move clients backwards.
+        return int(current["version"]), (
+            f"AMQ is serving source version {source_version}, already published as "
+            f"version {published}; version {current['version']} still stands."
+        )
 
     source_path = store.cache_dir / "raw" / f"{_safe_component(source_version)}.json"
     write_json(source_path, raw)

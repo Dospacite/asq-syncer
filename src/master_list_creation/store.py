@@ -197,6 +197,14 @@ class VersionStore:
             raise LookupError("no anime-list version is available")
         return dict(row)
 
+    def published_version(self, source_version: str) -> int | None:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT MAX(version) AS version FROM versions WHERE source_version = ?",
+                (source_version,),
+            ).fetchone()
+        return None if row["version"] is None else int(row["version"])
+
     def versions(self, limit: int = 30) -> list[dict[str, Any]]:
         with self._database() as database:
             rows = database.execute(

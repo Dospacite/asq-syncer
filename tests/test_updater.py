@@ -34,6 +34,31 @@ class UpdaterTest(unittest.TestCase):
             self.assertIn("unchanged", message)
             builder.assert_not_called()
 
+    def test_previously_published_source_keeps_latest_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            seed = snapshot(root / "seed.json", "source-1", {1: anime(1, "Alpha")})
+            store = VersionStore(root / "data")
+            store.initialize(seed)
+            newer = snapshot(root / "source-2.json", "source-2", {1: anime(1, "Alpha 2")})
+            store.commit_snapshot(newer)
+            raw = {
+                "masterListId": "source-1",
+                "animeMap": {},
+                "songMap": {},
+                "artistMap": {},
+                "groupMap": {},
+            }
+            with patch(
+                "master_list_creation.updater.HttpClient.get_json", return_value=raw
+            ), patch("master_list_creation.updater.builder_main") as builder:
+                version, message = run_update(store)
+
+            self.assertEqual(version, 2)
+            self.assertIn("already published as version 1", message)
+            builder.assert_not_called()
+            self.assertEqual(store.latest()["source_version"], "source-2")
+
     def test_asset_refresh_rebuilds_unchanged_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
