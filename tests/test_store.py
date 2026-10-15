@@ -161,6 +161,31 @@ class VersionStoreTest(unittest.TestCase):
         )
         self.assertEqual(store.commit_snapshot(second, allow_same_source=True), 8)
 
+    def test_pruning_keeps_the_newest_versions_and_their_diffs(self) -> None:
+        root = Path(self.temporary.name)
+        for number in range(2, 5):
+            source = snapshot(
+                root / f"source-{number}.json",
+                f"source-{number}",
+                {1: anime(1, f"Alpha {number}")},
+            )
+            self.assertEqual(self.store.commit_snapshot(source), number)
+        stale_diff = self.store.get_or_create_diff(1, 4)
+        kept_diff = self.store.get_or_create_diff(3, 4)
+
+        self.assertEqual(self.store.prune_versions(2), [1, 2])
+
+        self.assertEqual([row["version"] for row in self.store.versions()], [4, 3])
+        self.assertEqual(sorted(path.name for path in self.store.versions_dir.iterdir()), ["3.json", "4.json"])
+        self.assertFalse(stale_diff.exists())
+        self.assertTrue(kept_diff.exists())
+        with self.assertRaises(LookupError):
+            self.store.get_or_create_diff(1, 4)
+        self.assertEqual(self.store.prune_versions(2), [])
+        # Numbering continues from the newest version, not from the row count.
+        fifth = snapshot(root / "source-5.json", "source-5", {1: anime(1, "Alpha 5")})
+        self.assertEqual(self.store.commit_snapshot(fifth), 5)
+
     def test_browser_index_searches_title_and_id(self) -> None:
         records, total = self.store.anime_page("beta")
         self.assertEqual(total, 1)

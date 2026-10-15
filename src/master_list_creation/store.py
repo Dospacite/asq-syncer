@@ -294,7 +294,11 @@ class VersionStore:
             if cached and (self.diffs_dir / cached["file_name"]).exists():
                 return self.diffs_dir / cached["file_name"]
 
+            # Pruning holds this lock, so a version that survived the first check
+            # may have gone by now.
             target_record = self.version(to_version)
+            if self.version(from_version) is None or target_record is None:
+                raise LookupError("one or both requested versions do not exist")
             if from_version == to_version:
                 upserts: list[dict[str, Any]] = []
                 deletes: list[int] = []
@@ -324,6 +328,39 @@ class VersionStore:
                     (from_version, to_version, file_name),
                 )
             return path
+
+    def prune_versions(self, keep: int) -> list[int]:
+        """Drop all but the newest ``keep`` versions and every diff touching them.
+
+        Clients asking for updates from a dropped version get ``version_not_found``
+        and fall back to the full list.
+        """
+        if keep < 1:
+            raise ValueError("at least one version must be kept")
+        with self.lock_path.open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with self._database() as database:
+                pruned = database.execute(
+                    "SELECT version, file_name FROM versions ORDER BY version DESC LIMIT -1 OFFSET ?",
+                    (keep,),
+                ).fetchall()
+                if not pruned:
+                    return []
+                oldest_kept = int(pruned[0]["version"]) + 1
+                diffs = database.execute(
+                    "SELECT file_name FROM diff_cache WHERE from_version < ? OR to_version < ?",
+                    (oldest_kept, oldest_kept),
+                ).fetchall()
+                database.execute(
+                    "DELETE FROM diff_cache WHERE from_version < ? OR to_version < ?",
+                    (oldest_kept, oldest_kept),
+                )
+                database.execute("DELETE FROM versions WHERE version < ?", (oldest_kept,))
+            for row in diffs:
+                (self.diffs_dir / row["file_name"]).unlink(missing_ok=True)
+            for row in pruned:
+                (self.versions_dir / row["file_name"]).unlink(missing_ok=True)
+        return sorted(int(row["version"]) for row in pruned)
 
     def enqueue_update(
         self, requested_by: str, kind: str = "update"

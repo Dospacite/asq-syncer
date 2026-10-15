@@ -37,6 +37,7 @@ services:
       SEED_LIST_PATH: /app/seed/libraryMasterList.json
       WORKER_PORT: "8081"
       UPDATE_INTERVAL_SECONDS: ${UPDATE_INTERVAL_SECONDS:-21600}
+      VERSION_RETENTION: ${VERSION_RETENTION:-14}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     expose:
       - "8081"

@@ -108,6 +108,14 @@ through the existing enrichment/validation pipeline, atomically committed as
 the next integer application version, and diffed from its predecessor. The
 admin “Queue list update” button inserts a deduplicated job in the same queue.
 
+After every successful run the worker keeps only the newest
+`VERSION_RETENTION` versions (14 by default, at least 2) and deletes older
+snapshots together with every cached difference that touches them. A client
+asking for updates from a deleted version gets `404 version_not_found` and
+should download the full list instead. The upstream caches for superseded AMQ
+source versions are deleted too; only the current source's cache stays, for
+asset refreshes and for retrying a failed build.
+
 ### Refreshing assets
 
 Cover art can improve without AMQ shipping a new master list, and cached

@@ -10,6 +10,7 @@ import multiprocessing
 import os
 from pathlib import Path
 import queue
+import shutil
 import signal
 import tempfile
 import threading
@@ -30,6 +31,32 @@ def _stop(_signum: int, _frame: object) -> None:
     STOP = True
 
 
+def _version_retention() -> int:
+    # Two is the floor: the eager diff needs the previous version.
+    return max(2, int(os.getenv("VERSION_RETENTION", "14")))
+
+
+def _prune(store: VersionStore, source_version: str) -> None:
+    """Drop caches of superseded sources and versions past the retention window.
+
+    The builder caches each AMQ source under its own directory, so once a source
+    is superseded nothing reads its cache again. The current source's cache stays
+    for asset refreshes and for retrying a failed build.
+    """
+    keep = _safe_component(source_version)
+    for path in store.cache_dir.iterdir():
+        if path.is_dir() and path.name not in (keep, "raw"):
+            shutil.rmtree(path)
+    raw_dir = store.cache_dir / "raw"
+    if raw_dir.is_dir():
+        for path in raw_dir.iterdir():
+            if path.name != f"{keep}.json":
+                path.unlink()
+    pruned = store.prune_versions(_version_retention())
+    if pruned:
+        LOGGER.info(json.dumps({"event": "versions_pruned", "versions": pruned}))
+
+
 def run_update(store: VersionStore, *, refresh_assets: bool = False) -> tuple[int, str]:
     raw = HttpClient(timeout=90).get_json(AMQ_MASTER_LIST_URL)
     if not isinstance(raw, dict) or not isinstance(raw.get("animeMap"), dict):
@@ -39,6 +66,7 @@ def run_update(store: VersionStore, *, refresh_assets: bool = False) -> tuple[in
         raise ValueError("AMQ response does not contain masterListId")
     current = store.latest()
     if not refresh_assets and source_version == current["source_version"]:
+        _prune(store, source_version)
         return int(current["version"]), "Already current; source version is unchanged."
 
     source_path = store.cache_dir / "raw" / f"{_safe_component(source_version)}.json"
@@ -65,7 +93,9 @@ def run_update(store: VersionStore, *, refresh_assets: bool = False) -> tuple[in
         version = store.commit_snapshot(output, allow_same_source=refresh_assets)
     if version != previous_version:
         store.get_or_create_diff(previous_version, version)
+        _prune(store, source_version)
         return version, f"Published source version {source_version} as version {version}."
+    _prune(store, source_version)
     return version, f"The rebuild produced no changes; version {version} still stands."
 
 
